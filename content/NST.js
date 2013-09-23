@@ -282,13 +282,47 @@ function preg_quote(str, delimiter) {
      */
     this.parse = function(line, index, blockLiterals) {
       if (blockLiterals) { // Python only
-        /// these are handled as comments
-        for (i in line.match(/'''/g))
-          this.blockLiteral1 = !this.blockLiteral1;
-        for (i in line.match(/"""/g))
-          this.blockLiteral2 = !this.blockLiteral2;
-        // if we found an odd number of 1 of these, we have block literal line...
-        if (this.blockLiteral1 || this.blockLiteral2) return false; // to ignore
+        var actualLine = '';
+        while (line.length > 0) {
+          if (this.blockLiteral1) {
+            var blmatch = line.match(/^(.*?)'''(.*)$/);
+            if (!blmatch) {
+              break; // we're still inside a comment.
+            }
+            this.blockLiteral1 = false;
+            line = blmatch[2];
+          }
+          else if (this.blockLiteral2) {
+            var blmatch = line.match(/^(.*?)"""(.*)$/);
+            if (!blmatch) {
+              break; // we're still inside a comment.
+            }
+            this.blockLiteral1 = false;
+            line = blmatch[2];
+          }
+          else {
+            var blmatch = line.match(/^(.*?)((''')|("""))(.*)$/);
+            if (blmatch) {
+              actualLine += blmatch[1];
+              if (blmatch[3]) {
+                this.blockLiteral1 = true;
+              }
+              else {
+                this.blockLiteral2 = true;
+              }
+              line = blmatch[5];
+            }
+            else {
+              actualLine = line;
+              break;
+            }
+          }
+
+      }
+        line = actualLine;
+        if (line.length == 0) {
+          return false;
+        }
       }
       if (!line.match(swc)) { // if line not starts with comment
         /// strip literals:
@@ -299,9 +333,9 @@ function preg_quote(str, delimiter) {
         if ((lm = line.match(/'.*?'/g))) this.literals = this.literals.concat(lm);
         if ((lm = line.match(/".*?"/g))) this.literals = this.literals.concat(lm);
         if ((lm = line.match(/\/.+?\//g))) this.literals = this.literals.concat(lm);
-        line = line.replace(/'.*?'/g, "'...'")
-                   .replace(/".*?"/g, '"..."')
-                   .replace(/\/.+?\//g, '/.../'); // remove literals from code
+        //line = line.replace(/'.*?'/g, "'...'")
+        //           .replace(/".*?"/g, '"..."')
+        //           .replace(/\/.+?\//g, '/.../'); // remove literals from code
         for (i in this.literals) this.literals[i] =
           this.literals[i].replace(/\x00/g, "\\'")
                      .replace(/\x01/g, '\\"')
@@ -642,7 +676,7 @@ function preg_quote(str, delimiter) {
   /**
    * Line parser for Python, because it's no other language like Python
    */
-  LineParserPython = function() {
+  LineParserPythonOrig = function() {
     this.document = ko.views.manager.currentView.koDoc;
     this.indent = this.document.indentWidth;
     this.index = -1; // processed line number
@@ -723,6 +757,78 @@ function preg_quote(str, delimiter) {
       }
     };
   };
+  
+  /* Fab parser */
+  LineParserPython = function() {
+    this.document = ko.views.manager.currentView.koDoc;
+    this.indent = this.document.indentWidth;
+    this.index = -1; // processed line number
+    this.text = null;
+    this.type = TYPE_UNKNOWN; // set to TYPE_CLASS or TYPE_FUNCTION
+    this.close = 0; // how many node levels to close before adding this node
+    this.defBlock = 0; // def block offset state
+    this.csBlock = 0; // cs block offset state
+    this.csOffset = 0; // relative offset for control structure
+    this.info = undefined; // aditional tooltip text
+    var id = '[a-zA-Z][a-zA-Z0-9_.]*', // identifier match
+        pp = new Preprocessor(id, ['#'], [], 'Python'); // preprocessor instance
+    /**
+     * Single Python line parsing code, TIME CRITICAL
+     * @param {string} line
+     */
+    this.parse = function(line, index) {
+      this.text = undefined; // initial state (for empty lines / unmatched)
+      this.type = undefined; // initial state (for empty lines / unmatched)
+      line = pp.parse(line, index, true); if (!line) return;
+      var parts = line.match(/^(\s*)(.*?)\s*?$/), // main parts of the line
+          whitespace = parts[1],
+          code = parts[2],
+          indent = whitespace.length / this.indent,
+          defBlock = -1, // current def block indentation level
+          csBlock = - 1, // current cs block indentation level
+          csOffset = 0, // current block relative control structure offset
+          i, // local index
+          tab = ''; // single indentation string
+      for (i = 0; i < this.document.tabWidth; i++) tab+= ' ';
+      line = line.replace(/\t/g, tab);
+      this.index = pp.defBlockReady ? (1 * pp.defBlockStart) : (1 * index);
+      // non-empty nodes:
+      if (code) {
+        defBlock = -1; // like not found
+        csBlock = -1; // like not found
+        csOffset = 0; //
+        if ((parts = code.match(/((addgroup|TaskGroup)\s*\(\s*(.*?))(\.\s*add\s*\(.*)?$/))) {
+          defBlock = indent; // matched class
+          this.text = parts[1];
+          this.type = TYPE_CLASS;
+        } else if ((parts = code.match(/^((NewTable|Export).*)$/))) {
+          defBlock = indent; // matched def
+          this.text = parts[1];
+          this.type = TYPE_FUNCTION;
+        }
+        if (defBlock >= 0) { // we have a definition block...
+          if (defBlock <= this.csBlock) {
+            this.csBlock = 0;
+            this.csOffset = 0;
+          }
+          this.close = this.defBlock + this.csOffset - defBlock + 1; // determine how many levels to close
+          this.defBlock = defBlock - this.csOffset; // remember the position in state
+        }
+        if (csBlock >= 0) { // we have control structure block...
+          if (csBlock < this.csBlock) {
+            this.csOffset-= this.csBlock - csBlock;
+            this.csBlock = csBlock;
+          } else this.csBlock = csBlock;
+        }
+        if (csOffset > 0) this.csOffset = csOffset;
+      }
+    };
+  };
+  
+  
+  
+  
+  
   /**
    * Unique Lua parser
    */
