@@ -801,7 +801,8 @@ function preg_quote(str, delimiter) {
           defBlock = indent; // matched class
           this.text = parts[1];
           this.type = TYPE_CLASS;
-        } else if ((parts = code.match(/^((NewTable|Export).*)$/))) {
+        //} else if ((parts = code.match(/^((NewTable|Export).*)$/))) {
+        } else if ((parts = code.match(/^((([A-Z][a-z\d]*)+)\(.*)$/))) {
           defBlock = indent; // matched def
           this.text = parts[1];
           this.type = TYPE_FUNCTION;
